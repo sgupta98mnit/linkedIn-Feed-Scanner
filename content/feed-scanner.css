@@ -1,0 +1,6 @@
+/* LinkedIn Feed Scanner — content script styles */
+
+.lfs-badge {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  user-select: none;
+}

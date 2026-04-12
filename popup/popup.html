@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Feed Scanner</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header>
+      <div class="header-left">
+        <span class="logo">📋</span>
+        <span class="title">Feed Scanner</span>
+      </div>
+      <div class="header-actions">
+        <span id="ollama-status" class="status-dot offline" title="Ollama status"></span>
+        <button id="btn-settings" title="Settings" class="icon-btn">⚙️</button>
+        <button id="btn-export" title="Export CSV" class="icon-btn">⬇️</button>
+      </div>
+    </header>
+
+    <!-- Auto-scan bar -->
+    <div id="autoscan-bar" class="autoscan-bar">
+      <div id="autoscan-status" class="autoscan-status">
+        <span id="autoscan-indicator" class="autoscan-dot idle"></span>
+        <span id="autoscan-label">Auto-scan idle</span>
+      </div>
+      <button id="btn-autoscan" class="autoscan-btn start">▶ Start Auto-Scan</button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="Interested">Interested</button>
+      <button class="filter-btn" data-filter="Applied">Applied</button>
+      <button class="filter-btn" data-filter="Skipped">Skipped</button>
+    </div>
+
+    <!-- Job list -->
+    <div id="job-list" class="job-list">
+      <div class="empty-state" id="empty-state">
+        <p>No saved jobs yet.</p>
+        <p class="hint">Browse LinkedIn and relevant job posts will be saved automatically.</p>
+      </div>
+    </div>
+
+    <!-- Job detail panel (slides in) -->
+    <div id="detail-panel" class="detail-panel hidden">
+      <button id="btn-back" class="back-btn">← Back</button>
+
+      <div class="detail-header">
+        <div>
+          <div id="detail-title" class="detail-title"></div>
+          <div id="detail-company" class="detail-company"></div>
+        </div>
+        <div id="detail-score" class="score-badge"></div>
+      </div>
+
+      <div id="detail-meta" class="detail-meta"></div>
+      <div id="detail-summary" class="detail-summary"></div>
+
+      <!-- Status + reminder -->
+      <div class="detail-section">
+        <label class="section-label">Status</label>
+        <div class="status-row">
+          <button class="status-btn" data-status="Interested">Interested</button>
+          <button class="status-btn" data-status="Applied">Applied</button>
+          <button class="status-btn" data-status="Skipped">Skipped</button>
+        </div>
+      </div>
+
+      <div class="detail-section" id="reminder-section">
+        <label class="section-label">Follow-up reminder</label>
+        <div class="reminder-row">
+          <input type="date" id="reminder-date" class="date-input" />
+          <button id="btn-set-reminder" class="action-btn">Set</button>
+        </div>
+      </div>
+
+      <!-- Message composer -->
+      <div class="detail-section">
+        <label class="section-label">Generate messages</label>
+
+        <div class="tone-row">
+          <label class="tone-label">Tone:</label>
+          <select id="tone-select" class="tone-select">
+            <option value="Professional">Professional</option>
+            <option value="Enthusiastic">Enthusiastic</option>
+            <option value="Concise">Concise</option>
+          </select>
+        </div>
+
+        <div class="compose-buttons">
+          <button id="btn-gen-comment" class="compose-btn">💬 Comment</button>
+          <button id="btn-gen-email" class="compose-btn">✉️ Email</button>
+          <button id="btn-gen-connect" class="compose-btn">🤝 Connect</button>
+        </div>
+
+        <div id="compose-output" class="compose-output hidden">
+          <div class="compose-label" id="compose-label"></div>
+          <textarea id="compose-textarea" rows="7" spellcheck="true"></textarea>
+          <div class="compose-actions">
+            <button id="btn-copy" class="action-btn">Copy</button>
+            <span id="copy-confirm" class="copy-confirm hidden">Copied!</span>
+          </div>
+        </div>
+
+        <div id="compose-spinner" class="spinner hidden">Generating…</div>
+        <div id="compose-error" class="error-msg hidden"></div>
+      </div>
+
+      <div class="detail-section">
+        <a id="detail-link" href="#" target="_blank" class="view-post-link">View post on LinkedIn ↗</a>
+        <button id="btn-delete" class="delete-btn">Delete entry</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

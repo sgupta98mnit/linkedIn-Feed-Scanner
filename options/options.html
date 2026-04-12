@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Feed Scanner — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+
+  <!-- ── Top header bar ─────────────────────────────────────────────────────── -->
+  <header class="top-header">
+    <div class="header-inner">
+      <div class="logo-row">
+        <span class="logo">📋</span>
+        <div>
+          <h1>LinkedIn Feed Scanner</h1>
+          <p class="subtitle">Configure your profile, review saved jobs, and analyse AI activity.</p>
+        </div>
+      </div>
+      <div id="ollama-status-bar" class="status-bar checking">
+        <span id="ollama-icon">●</span>
+        <span id="ollama-status-text">Checking AI provider…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Two-column layout ─────────────────────────────────────────────────── -->
+  <div class="page-body">
+    <div class="two-col">
+
+      <!-- LEFT: Ollama settings + Stored data ──────────────────────────────── -->
+      <div class="col-left">
+
+        <section class="card">
+          <h2>AI Provider</h2>
+
+          <div class="form-row">
+            <label>Provider</label>
+            <div class="provider-toggle">
+              <label class="provider-opt">
+                <input type="radio" name="provider" id="provider-google" value="google-ai" />
+                Google AI Studio (Gemma 4)
+              </label>
+              <label class="provider-opt">
+                <input type="radio" name="provider" id="provider-ollama" value="ollama" />
+                Ollama (local)
+              </label>
+            </div>
+          </div>
+
+          <!-- Google AI fields -->
+          <div id="google-ai-fields">
+            <div class="form-row">
+              <label for="google-api-key">API Key</label>
+              <input type="password" id="google-api-key" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+              <span class="hint">Get a free key from Google AI Studio (aistudio.google.com)</span>
+            </div>
+            <div class="form-row">
+              <label for="google-model">Model</label>
+              <input type="text" id="google-model" placeholder="gemma-4-31b-it" autocomplete="off" spellcheck="false" />
+              <span class="hint">Default: gemma-4-31b-it (Gemma 4 31B instruction-tuned)</span>
+            </div>
+          </div>
+
+          <!-- Ollama fields -->
+          <div id="ollama-fields">
+            <div class="form-row">
+              <label for="ollama-url">Base URL</label>
+              <input type="text" id="ollama-url" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false" />
+              <span class="hint">Default: http://localhost:11434</span>
+            </div>
+            <div class="form-row">
+              <label for="ollama-model">Model</label>
+              <input type="text" id="ollama-model" placeholder="gemma4:e4b" autocomplete="off" spellcheck="false" />
+              <span class="hint">Any model pulled locally (e.g. gemma4:e4b, llama3, mistral)</span>
+            </div>
+          </div>
+
+          <div class="row-actions">
+            <button type="button" id="btn-test-connection" class="secondary-btn">Test Connection</button>
+            <span id="test-result" class="test-result hidden"></span>
+          </div>
+        </section>
+
+        <!-- Stored data inspector -->
+        <section class="card">
+          <div class="section-header-row">
+            <h2>Stored Data</h2>
+            <button type="button" id="btn-refresh-data" class="icon-btn" title="Refresh">↻</button>
+          </div>
+          <p class="section-desc" id="data-summary"></p>
+
+          <div class="data-group">
+            <div class="data-group-header" data-target="data-profile">
+              <span class="data-group-title">Profile</span>
+              <span class="data-group-toggle">▼</span>
+            </div>
+            <div class="data-group-body" id="data-profile">
+              <table class="data-table" id="table-profile"></table>
+            </div>
+          </div>
+
+          <div class="data-group">
+            <div class="data-group-header" data-target="data-jobs">
+              <span class="data-group-title">Saved Jobs <span id="jobs-count" class="count-badge"></span></span>
+              <span class="data-group-toggle">▼</span>
+            </div>
+            <div class="data-group-body collapsed" id="data-jobs">
+              <div id="jobs-cards"></div>
+            </div>
+          </div>
+
+          <div class="data-group">
+            <div class="data-group-header" data-target="data-scanned">
+              <span class="data-group-title">Scanned Posts <span id="scanned-count" class="count-badge"></span></span>
+              <span class="data-group-toggle">▼</span>
+            </div>
+            <div class="data-group-body collapsed" id="data-scanned">
+              <table class="data-table" id="table-scanned"></table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Danger zone -->
+        <section class="card danger-zone">
+          <h2>Data Management</h2>
+          <p class="section-desc">Export or permanently delete all local data.</p>
+          <div class="danger-actions">
+            <button type="button" id="btn-export" class="secondary-btn">Export Jobs CSV</button>
+            <button type="button" id="btn-clear" class="danger-btn">Clear All Data</button>
+          </div>
+        </section>
+
+      </div><!-- /col-left -->
+
+      <!-- RIGHT: Profile form ──────────────────────────────────────────────── -->
+      <div class="col-right">
+        <section class="card">
+          <h2>Your Profile</h2>
+          <form id="profile-form">
+
+            <div class="form-row">
+              <label>Resume (PDF)</label>
+              <div class="pdf-upload-area" id="pdf-upload-area">
+                <input type="file" id="pdf-input" accept=".pdf" />
+                <label for="pdf-input" class="pdf-label" id="pdf-label">
+                  <span id="pdf-label-text">Drag &amp; drop or click to choose PDF…</span>
+                </label>
+              </div>
+              <div id="pdf-status" class="pdf-status hidden"></div>
+            </div>
+
+            <div class="form-row">
+              <label for="bio">Extracted Resume Text <span class="label-muted">(editable)</span></label>
+              <textarea id="bio" rows="12"
+                placeholder="Resume text appears here after upload, or paste your bio manually."></textarea>
+              <span class="hint">Used as context for job scoring and all AI-generated messages.</span>
+            </div>
+
+            <div class="form-row">
+              <label for="target-roles">Target Roles</label>
+              <div class="input-with-btn">
+                <input type="text" id="target-roles"
+                  placeholder="Senior Frontend Engineer, React, TypeScript, Staff Engineer" />
+                <button type="button" id="btn-detect-roles" class="secondary-btn inline-btn" disabled>
+                  Auto-detect from resume
+                </button>
+              </div>
+              <span class="hint">Comma-separated. Auto-detect fills this from your resume via AI.</span>
+            </div>
+
+            <div class="form-row">
+              <label for="industries">Preferred Industries</label>
+              <input type="text" id="industries" placeholder="All industries (leave blank for any)" />
+              <span class="hint">Optional filter applied during relevance scoring.</span>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="primary-btn">Save Profile</button>
+              <span id="save-status" class="save-status hidden"></span>
+            </div>
+          </form>
+        </section>
+      </div><!-- /col-right -->
+
+    </div><!-- /two-col -->
+
+    <!-- ── Full-width: Ollama Logs ─────────────────────────────────────────── -->
+    <section class="card full-width-card">
+      <div class="section-header-row">
+        <h2>AI Logs</h2>
+        <div class="toolbar-right">
+          <button type="button" id="btn-refresh-logs" class="icon-btn" title="Refresh">↻</button>
+          <button type="button" id="btn-export-logs-csv" class="secondary-btn">CSV</button>
+          <button type="button" id="btn-export-logs-json" class="secondary-btn">JSON</button>
+          <button type="button" id="btn-clear-logs" class="danger-btn">Clear</button>
+        </div>
+      </div>
+
+      <div id="log-stats" class="log-stats"></div>
+
+      <div id="log-table-wrap" class="log-table-wrap">
+        <table class="log-table" id="log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Model</th>
+              <th>Decision</th>
+              <th>Score</th>
+              <th>Job Title</th>
+              <th>Company</th>
+              <th>Post URL</th>
+              <th>Prompt</th>
+              <th>Chars in/out</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="log-tbody"></tbody>
+        </table>
+        <div id="log-empty" class="log-empty hidden">No logs yet. Start scanning to see entries here.</div>
+      </div>
+    </section>
+
+  </div><!-- /page-body -->
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>
