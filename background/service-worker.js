@@ -145,6 +145,39 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   updateBadge();
 });
 
+// ── JSON extraction helper ────────────────────────────────────────────────────
+// Gemma often "thinks out loud" and emits multiple JSON blocks inside markdown
+// fences before settling on a final answer. This function:
+//   1. Finds all ```json ... ``` fenced blocks and tries to parse the LAST one.
+//   2. Falls back to finding the last bare {...} object in the text.
+// Using the last block handles models that self-correct mid-response.
+
+function extractJSON(text) {
+  // Collect all fenced JSON blocks (```json ... ``` or ``` ... ```)
+  const fenceRe = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;
+  let lastFenced = null;
+  let m;
+  while ((m = fenceRe.exec(text)) !== null) {
+    lastFenced = m[1];
+  }
+  if (lastFenced) {
+    try { return JSON.parse(lastFenced); } catch {}
+  }
+
+  // Fallback: find all bare {...} objects and try each from last to first
+  const bareRe = /\{[\s\S]*?\}/g;
+  const candidates = [];
+  while ((m = bareRe.exec(text)) !== null) {
+    candidates.push(m[0]);
+  }
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try { return JSON.parse(candidates[i]); } catch {}
+  }
+
+  // Last resort: throw so the caller can log it
+  throw new SyntaxError('No valid JSON object found in response');
+}
+
 // ── Message handler ───────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -203,8 +236,7 @@ async function handleMessage(message) {
 
       let parsed;
       try {
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawResponse);
+        parsed = extractJSON(rawResponse);
       } catch {
         await logOllamaCall({ type: 'analyze_post', model, prompt, response: rawResponse, decision: 'error', postId, errorMsg: 'JSON parse failed' });
         return { error: 'Failed to parse AI response as JSON', raw: rawResponse };
