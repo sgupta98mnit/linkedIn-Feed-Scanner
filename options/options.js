@@ -73,7 +73,6 @@ async function updateAIStatus(provider, { googleApiKey, googleModel, ollamaBaseU
   let online = false, error = 'Unknown error';
 
   console.log('[options] updateAIStatus — provider:', provider);
-  debugger;
 
   try {
     if (provider === 'google-ai') {
