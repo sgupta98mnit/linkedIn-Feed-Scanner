@@ -93,17 +93,30 @@
     return '';
   }
 
-  function extractPostUrl(el) {
-    // Prefer explicit anchor links in the post element
-    const anchor = el.querySelector('a[href*="/feed/update/"]')
-                || el.querySelector('a[href*="/posts/"]');
-    if (anchor) return anchor.href;
+  // Only accept real post permalinks. The bare /posts/ substring is not enough —
+  // LinkedIn uses it for company feeds (/company/<name>/posts/) and author activity
+  // pages (/in/<name>/recent-activity/posts/) which are NOT the post we scanned.
+  function isPermalink(href) {
+    if (!href) return false;
+    // /feed/update/urn:li:activity:1234567890
+    if (/\/feed\/update\/urn%3Ali%3A(?:activity|share|ugcPost)%3A\d+/i.test(href)) return true;
+    if (/\/feed\/update\/urn:li:(?:activity|share|ugcPost):\d+/i.test(href)) return true;
+    // /posts/firstname-lastname-activity-1234567890-slug (direct post permalink)
+    if (/\/posts\/[^/?#]+-activity-\d{10,}/i.test(href)) return true;
+    return false;
+  }
 
-    // Modern LinkedIn feed: URN is buried in descendants, not on componentkey.
+  function extractPostUrl(el) {
+    // Check every anchor inside the post, keep only real permalinks.
+    for (const a of el.querySelectorAll('a[href]')) {
+      if (isPermalink(a.href)) return a.href;
+    }
+
+    // Fall back to any URN buried in the subtree (data-urn/data-id/innerHTML scan).
     const urn = findActivityUrn(el);
     if (urn) return `https://www.linkedin.com/feed/update/${urn}`;
 
-    return '';
+    return '';  // better than saving a wrong URL (e.g. a company's posts page)
   }
 
   function isInOrNearViewport(el) {
