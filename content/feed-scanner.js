@@ -13,13 +13,27 @@
   // ── DOM helpers ───────────────────────────────────────────────────────────
 
   function findPosts() {
-    return [...document.querySelectorAll('div[role="listitem"][componentkey]')];
+    // Primary selector for the current feed layout
+    const primary = [...document.querySelectorAll('div[role="listitem"][componentkey]')];
+    if (primary.length) return primary;
+
+    // Fallbacks for LinkedIn A/B variants that ship different post wrappers
+    return [...document.querySelectorAll(
+      '[data-urn^="urn:li:activity:"], [data-id^="urn:li:activity:"], div.feed-shared-update-v2'
+    )];
   }
 
   function extractPostId(el) {
     const key = el.getAttribute('componentkey') || '';
-    const m = key.match(/^expanded(.+?)FeedType_/) || key.match(/^(.+?)FeedType_/);
-    return m ? m[1] : (key || null);
+    if (key) {
+      const m = key.match(/^expanded(.+?)FeedType_/) || key.match(/^(.+?)FeedType_/);
+      if (m) return m[1];
+      const urn = key.match(/(urn:li:(?:activity|sponsoredUpdate|share):\S+?)(?:FeedType_|$)/);
+      if (urn) return urn[1];
+      return key;
+    }
+    // Fallback selectors: read urn from data-urn / data-id
+    return el.getAttribute('data-urn') || el.getAttribute('data-id') || null;
   }
 
   function extractPostText(el) {
@@ -65,6 +79,23 @@
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Retries once after a short delay — handles MV3 service worker wake-up races
+  // where the first sendMessage fails with "receiving end does not exist".
+  async function sendMessageWithRetry(msg, { retries = 2, delayMs = 500 } = {}) {
+    let lastErr;
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const res = await chrome.runtime.sendMessage(msg);
+        if (res !== undefined) return res;
+      } catch (e) {
+        lastErr = e;
+      }
+      if (i < retries) await sleep(delayMs);
+    }
+    if (lastErr) throw lastErr;
+    return undefined;
+  }
 
   // ── Badge ─────────────────────────────────────────────────────────────────
 
@@ -146,7 +177,10 @@
   // ── Single post scanner ───────────────────────────────────────────────────
 
   async function scanPost(el, stats) {
-    if (el.getAttribute(PROCESSED_ATTR) && el.getAttribute(PROCESSED_ATTR) !== 'queued') return;
+    const state = el.getAttribute(PROCESSED_ATTR);
+    // 'error' is retryable — transient failures (worker asleep, rate limit, parse glitch)
+    // shouldn't permanently skip a post for the rest of the session.
+    if (state && state !== 'queued' && state !== 'error') return;
 
     const postId = extractPostId(el);
     if (!postId) {
@@ -167,15 +201,17 @@
     const postUrl    = extractPostUrl(el);
     const posterName = extractAuthorName(el);
 
+    if (!postUrl) warn(`Post ${postId.slice(0, 12)}… — no URL extracted (componentkey: "${(el.getAttribute('componentkey') || '').slice(0, 60)}")`);
+
     // Highlight the post being scanned
     el.style.outline = '2px solid #0a66c2';
     el.style.outlineOffset = '2px';
 
-    log(`Scanning post ${postId.slice(0, 12)}… | "${postText.slice(0, 60)}…"`);
+    log(`Scanning post ${postId.slice(0, 12)}… | url=${postUrl || '(none)'} | "${postText.slice(0, 60)}…"`);
 
     let response;
     try {
-      response = await chrome.runtime.sendMessage({
+      response = await sendMessageWithRetry({
         type: 'ANALYZE_POST',
         payload: { postId, postText, postUrl, posterName },
       });
@@ -235,6 +271,7 @@
 
   let autoScanActive = false;
   let _keepAlivePort = null;
+  let _heartbeatTimer = null;
 
   function openKeepAlivePort() {
     try {
@@ -248,19 +285,40 @@
     _keepAlivePort = null;
   }
 
+  // Belt-and-suspenders: a periodic ping resets the MV3 service worker's 30 s
+  // idle timer, even if the keep-alive port silently drops.
+  function startHeartbeat() {
+    stopHeartbeat();
+    _heartbeatTimer = setInterval(() => {
+      chrome.runtime.sendMessage({ type: 'PING' }).catch(() => {});
+    }, 20000);
+  }
+
+  function stopHeartbeat() {
+    if (_heartbeatTimer) {
+      clearInterval(_heartbeatTimer);
+      _heartbeatTimer = null;
+    }
+  }
+
   async function runAutoScan() {
     const stats = { processed: 0, saved: 0, rejected: 0, skipped: 0, errors: 0, cached: 0 };
 
-    openKeepAlivePort(); // keep service worker alive during long Ollama calls
+    openKeepAlivePort(); // keep service worker alive during long AI calls
+    startHeartbeat();
     showOverlay();
     log('Auto-scan started');
 
     while (autoScanActive) {
-      // Find the next unprocessed post anywhere in the DOM
+      // Find the next unprocessed post anywhere in the DOM.
+      // 'error' posts are eligible for retry, but only once per run to avoid infinite loops.
       const next = findPosts().find(p => {
-        const state = p.getAttribute(PROCESSED_ATTR);
-        return !state || state === 'queued';
+        const s = p.getAttribute(PROCESSED_ATTR);
+        return !s || s === 'queued' || (s === 'error' && !p.hasAttribute('data-lfs-retried'));
       });
+      if (next && next.getAttribute(PROCESSED_ATTR) === 'error') {
+        next.setAttribute('data-lfs-retried', '1');
+      }
 
       if (!next) {
         // No unprocessed posts — scroll to load more
@@ -297,6 +355,7 @@
     const reason = autoScanActive ? 'done' : 'user_stopped';
     autoScanActive = false;
     closeKeepAlivePort();
+    stopHeartbeat();
     hideOverlay();
 
     log(`Auto-scan finished. Processed: ${stats.processed} | Saved: ${stats.saved} | Errors: ${stats.errors}`);
@@ -310,6 +369,7 @@
   function stopAutoScan() {
     autoScanActive = false;
     closeKeepAlivePort();
+    stopHeartbeat();
     hideOverlay();
     chrome.runtime.sendMessage({
       type: 'AUTOSCAN_STATUS',

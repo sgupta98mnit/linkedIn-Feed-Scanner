@@ -193,6 +193,10 @@ async function handleMessage(message) {
 
   switch (type) {
 
+    case 'PING': {
+      return { ok: true, t: Date.now() };
+    }
+
     case 'CHECK_OLLAMA': {
       // Legacy name kept for content script compatibility
       const profile = await getProfile();
