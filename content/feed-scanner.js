@@ -23,16 +23,51 @@
     )];
   }
 
+  // LinkedIn's modern feed no longer puts URNs in componentkey (it's now an opaque
+  // base64 hash). The real URN still appears inside the post subtree — in data-urn,
+  // data-id, href attributes, aria-labels, or embedded JSON. This helper walks the
+  // subtree looking for the first urn:li:activity:<digits> it can find.
+  function findActivityUrn(el) {
+    const URN_RE = /urn:li:(?:activity|sponsoredUpdate|share):\d+/;
+
+    // 1) Fast path — direct data-urn / data-id on the element or a descendant
+    const tagged = el.matches('[data-urn], [data-id]')
+      ? el
+      : el.querySelector('[data-urn*="urn:li:"], [data-id*="urn:li:"]');
+    if (tagged) {
+      const v = tagged.getAttribute('data-urn') || tagged.getAttribute('data-id') || '';
+      const m = v.match(URN_RE);
+      if (m) return m[0];
+    }
+
+    // 2) Any anchor href containing the URN
+    const hrefNode = el.querySelector('a[href*="urn%3Ali%3Aactivity"], a[href*="urn:li:activity"]');
+    if (hrefNode) {
+      const decoded = decodeURIComponent(hrefNode.getAttribute('href') || '');
+      const m = decoded.match(URN_RE);
+      if (m) return m[0];
+    }
+
+    // 3) Last resort — scan the post's innerHTML. Slower but catches URNs embedded
+    //    in nested aria-labels, inline JSON, data-chameleon-*, etc.
+    const m = el.innerHTML.match(URN_RE);
+    return m ? m[0] : null;
+  }
+
   function extractPostId(el) {
+    // Prefer a real URN if we can find one — it's stable across sessions and
+    // matches what LinkedIn uses for permalinks.
+    const urn = findActivityUrn(el);
+    if (urn) return urn;
+
+    // Fall back to the opaque componentkey hash (unique per render, but at least
+    // stable within a single page load so dedupe within a scan still works).
     const key = el.getAttribute('componentkey') || '';
     if (key) {
       const m = key.match(/^expanded(.+?)FeedType_/) || key.match(/^(.+?)FeedType_/);
       if (m) return m[1];
-      const urn = key.match(/(urn:li:(?:activity|sponsoredUpdate|share):\S+?)(?:FeedType_|$)/);
-      if (urn) return urn[1];
       return key;
     }
-    // Fallback selectors: read urn from data-urn / data-id
     return el.getAttribute('data-urn') || el.getAttribute('data-id') || null;
   }
 
@@ -64,13 +99,11 @@
                 || el.querySelector('a[href*="/posts/"]');
     if (anchor) return anchor.href;
 
-    // Fall back to constructing from the componentkey, which often contains the activity URN.
-    // e.g. componentkey="expandedurn:li:activity:1234567890FeedType_..." → postId="urn:li:activity:1234567890"
-    const key = el.getAttribute('componentkey') || '';
-    const urnMatch = key.match(/(urn:li:activity:\d+)/);
-    if (urnMatch) return `https://www.linkedin.com/feed/update/${urnMatch[1]}`;
+    // Modern LinkedIn feed: URN is buried in descendants, not on componentkey.
+    const urn = findActivityUrn(el);
+    if (urn) return `https://www.linkedin.com/feed/update/${urn}`;
 
-    return '';  // empty is safer than the feed homepage URL
+    return '';
   }
 
   function isInOrNearViewport(el) {
