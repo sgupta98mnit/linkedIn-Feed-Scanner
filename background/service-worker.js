@@ -247,7 +247,6 @@ async function handleMessage(message) {
       }
 
       const saved = parsed.is_job_post && parsed.relevance_score >= 6;
-      await markPostScanned(postId, parsed.is_job_post, saved, parsed.relevance_score);
 
       await logOllamaCall({
         type:     'analyze_post',
@@ -275,10 +274,17 @@ async function handleMessage(message) {
           timestamp:    Date.now(),
           postText:     postText.slice(0, 500),
         };
+        // Save first — if saveJob throws (storage quota, etc.) we must NOT mark
+        // the post as scanned, or it becomes permanently blocklisted but never
+        // actually saved.
         await saveJob(job);
+        await markPostScanned(postId, true, true, parsed.relevance_score);
         await updateBadge();
         return { saved: true, job, score: parsed.relevance_score };
       }
+
+      // Only mark as scanned for the non-saved branch — no storage write can fail here.
+      await markPostScanned(postId, parsed.is_job_post, false, parsed.relevance_score);
 
       return { saved: false, isJobPost: parsed.is_job_post, score: parsed.relevance_score };
     }
