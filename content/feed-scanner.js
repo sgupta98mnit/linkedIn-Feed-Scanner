@@ -5,6 +5,7 @@
 
   const BADGE_CLASS    = 'lfs-badge';
   const PROCESSED_ATTR = 'data-lfs-processed';
+  const ACTIVITY_SCAN_FLAG = 'lfs-start-activity-scan';
 
   const log  = (...a) => console.log('%c[LFS]', 'color:#0a66c2;font-weight:bold', ...a);
   const warn = (...a) => console.warn('%c[LFS]',  'color:#e65100;font-weight:bold', ...a);
@@ -126,6 +127,14 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+  let activityHelpersPromise = null;
+  function loadActivityHelpers() {
+    if (!activityHelpersPromise) {
+      activityHelpersPromise = import(chrome.runtime.getURL('utils/activity.js'));
+    }
+    return activityHelpersPromise;
+  }
+
   // Retries once after a short delay — handles MV3 service worker wake-up races
   // where the first sendMessage fails with "receiving end does not exist".
   async function sendMessageWithRetry(msg, { retries = 2, delayMs = 500 } = {}) {
@@ -184,7 +193,7 @@
 
   let overlayEl = null;
 
-  function showOverlay() {
+  function showOverlay(title = 'Scanning feed...') {
     if (overlayEl) return;
     overlayEl = document.createElement('div');
     overlayEl.id = 'lfs-progress-overlay';
@@ -198,6 +207,7 @@
       <div style="font-weight:700;margin-bottom:4px">🔍 Scanning feed…</div>
       <div id="lfs-overlay-text" style="font-size:12px;opacity:.85">Starting…</div>
     `;
+    overlayEl.querySelector('div').textContent = title;
     document.body.appendChild(overlayEl);
   }
 
@@ -216,6 +226,15 @@
     updateOverlay(text);
     chrome.runtime.sendMessage({
       type: 'AUTOSCAN_STATUS',
+      payload: { active: true, ...stats },
+    }).catch(() => {});
+  }
+
+  function notifyActivityProgress(stats) {
+    const text = `Checked: ${stats.checked} | Saved: ${stats.saved} | Skipped: ${stats.skipped}`;
+    updateOverlay(text);
+    chrome.runtime.sendMessage({
+      type: 'ACTIVITYSCAN_STATUS',
       payload: { active: true, ...stats },
     }).catch(() => {});
   }
@@ -314,6 +333,71 @@
   }
 
   // ── Auto-scan loop ────────────────────────────────────────────────────────
+
+  async function scanActivityCandidate(candidate, stats) {
+    const postId = candidate.postId;
+    const postText = candidate.postText || '';
+
+    if (!postId || !postText || postText.length < 30) {
+      stats.skipped++;
+      return;
+    }
+
+    log(`Scanning activity post ${postId.slice(0, 12)}... | ${candidate.engagementType} | "${postText.slice(0, 60)}..."`);
+
+    let response;
+    try {
+      response = await sendMessageWithRetry({
+        type: 'ANALYZE_POST',
+        payload: {
+          postId,
+          postText,
+          postUrl: candidate.postUrl || '',
+          posterName: candidate.posterName || '',
+          sourceType: candidate.sourceType,
+          sourceProfileSlug: candidate.sourceProfileSlug,
+          sourceProfileName: candidate.sourceProfileName,
+          engagementType: candidate.engagementType,
+          activityUrl: candidate.activityUrl,
+        },
+      });
+    } catch (e) {
+      err(`Activity post ${postId.slice(0, 12)}... runtime error:`, e.message);
+      stats.errors++;
+      return;
+    }
+
+    if (!response) {
+      stats.errors++;
+      return;
+    }
+
+    if (response.error) {
+      const msg = response.error;
+      err(`Activity post ${postId.slice(0, 12)}... error: ${msg}`);
+      if (msg.includes('offline') || msg.includes('CORS')) {
+        showOfflineWarning(msg);
+      } else if (msg.includes('Profile not')) {
+        showOfflineWarning('Profile not configured. Open extension options.');
+      }
+      stats.errors++;
+      return;
+    }
+
+    if (response.skipped) {
+      stats.cached++;
+      return;
+    }
+
+    stats.processed++;
+    if (response.saved) {
+      stats.saved++;
+      log(`Activity post ${postId.slice(0, 12)}... saved (${response.score}/10)`);
+    } else {
+      stats.rejected++;
+      log(`Activity post ${postId.slice(0, 12)}... not relevant (score ${response.score}/10)`);
+    }
+  }
 
   let autoScanActive = false;
   let _keepAlivePort = null;
@@ -425,9 +509,144 @@
 
   // ── Message listener (from popup) ─────────────────────────────────────────
 
+  let activityScanActive = false;
+  let activityScanSeen = new Set();
+
+  function findActivityCards() {
+    const cards = [...document.querySelectorAll('article, div[role="listitem"], [data-urn^="urn:li:activity:"], [data-id^="urn:li:activity:"], div.feed-shared-update-v2')];
+    return cards.filter(card => extractActivityTargetUrl(card));
+  }
+
+  function extractActivityTargetUrl(card) {
+    const postUrl = extractPostUrl(card);
+    if (postUrl) return postUrl;
+
+    for (const a of card.querySelectorAll('a[href*="/jobs/view/"]')) {
+      try {
+        const url = new URL(a.href);
+        if (/^\/jobs\/view\/\d+\/?/.test(url.pathname)) return a.href;
+      } catch {}
+    }
+
+    return '';
+  }
+
+  function getVisibleProfileName() {
+    const h1 = document.querySelector('h1');
+    if (h1?.innerText?.trim()) return h1.innerText.trim();
+    const title = document.title || '';
+    const match = title.match(/^(.+?)\s+\|\s+LinkedIn/i);
+    return match ? match[1].trim() : '';
+  }
+
+  async function ensureActivityPage() {
+    const helpers = await loadActivityHelpers();
+    const slug = helpers.extractProfileSlugFromUrl(window.location.href);
+    if (!slug) return { ok: false, reason: 'not_on_profile' };
+
+    if (!window.location.pathname.includes('/recent-activity/')) {
+      sessionStorage.setItem(ACTIVITY_SCAN_FLAG, '1');
+      window.location.assign(helpers.buildRecentActivityUrl(slug));
+      return { ok: false, reason: 'navigating' };
+    }
+
+    return { ok: true, helpers, slug };
+  }
+
+  function collectRawActivityCandidates() {
+    return findActivityCards().map(card => {
+      const text = extractPostText(card);
+      return {
+        text,
+        postText: text,
+        postUrl: extractActivityTargetUrl(card),
+        posterName: extractAuthorName(card),
+      };
+    });
+  }
+
+  async function runActivityScan() {
+    const page = await ensureActivityPage();
+    if (!page.ok) {
+      activityScanActive = false;
+      chrome.runtime.sendMessage({
+        type: 'ACTIVITYSCAN_STATUS',
+        payload: { active: false, reason: page.reason },
+      }).catch(() => {});
+      return;
+    }
+
+    const { helpers, slug } = page;
+    const stats = { checked: 0, processed: 0, saved: 0, rejected: 0, skipped: 0, errors: 0, cached: 0 };
+    activityScanSeen = new Set();
+
+    openKeepAlivePort();
+    startHeartbeat();
+    showOverlay('Scanning profile activity...');
+    log('Activity scan started');
+
+    let stagnantScrolls = 0;
+
+    while (activityScanActive) {
+      const candidates = helpers.normalizeActivityCandidates(collectRawActivityCandidates(), {
+        sourceProfileSlug: slug,
+        sourceProfileName: getVisibleProfileName(),
+        activityUrl: window.location.href,
+      }).filter(candidate => !activityScanSeen.has(candidate.postId));
+
+      if (!candidates.length) {
+        const pageHeight = document.documentElement.scrollHeight;
+        window.scrollBy({ top: window.innerHeight * 0.85, behavior: 'smooth' });
+        await sleep(2200);
+        if (document.documentElement.scrollHeight <= pageHeight) stagnantScrolls++;
+        else stagnantScrolls = 0;
+        if (stagnantScrolls >= 2) break;
+        notifyActivityProgress(stats);
+        continue;
+      }
+
+      for (const candidate of candidates) {
+        if (!activityScanActive) break;
+        activityScanSeen.add(candidate.postId);
+        stats.checked++;
+        await scanActivityCandidate(candidate, stats);
+        notifyActivityProgress(stats);
+        await sleep(200);
+      }
+    }
+
+    const reason = activityScanActive ? 'done' : 'user_stopped';
+    activityScanActive = false;
+    closeKeepAlivePort();
+    stopHeartbeat();
+    hideOverlay();
+
+    log(`Activity scan finished. Checked: ${stats.checked} | Saved: ${stats.saved} | Errors: ${stats.errors}`);
+
+    chrome.runtime.sendMessage({
+      type: 'ACTIVITYSCAN_STATUS',
+      payload: { active: false, reason, ...stats },
+    }).catch(() => {});
+  }
+
+  function stopActivityScan() {
+    activityScanActive = false;
+    closeKeepAlivePort();
+    stopHeartbeat();
+    hideOverlay();
+    chrome.runtime.sendMessage({
+      type: 'ACTIVITYSCAN_STATUS',
+      payload: { active: false, reason: 'user_stopped' },
+    }).catch(() => {});
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'GET_AUTOSCAN_STATE') {
       sendResponse({ active: autoScanActive });
+      return;
+    }
+    if (msg.type === 'GET_ACTIVITYSCAN_STATE') {
+      sendResponse({ active: activityScanActive });
       return;
     }
     if (msg.type === 'START_AUTOSCAN') {
@@ -445,6 +664,14 @@
     if (msg.type === 'STOP_AUTOSCAN') {
       stopAutoScan();
     }
+    if (msg.type === 'START_ACTIVITY_SCAN') {
+      if (activityScanActive) return;
+      activityScanActive = true;
+      runActivityScan();
+    }
+    if (msg.type === 'STOP_ACTIVITY_SCAN') {
+      stopActivityScan();
+    }
   });
 
   // ── SPA navigation ────────────────────────────────────────────────────────
@@ -460,5 +687,11 @@
   // ── Init ──────────────────────────────────────────────────────────────────
 
   log('Content script loaded on', window.location.pathname);
+
+  if (sessionStorage.getItem(ACTIVITY_SCAN_FLAG) === '1' && window.location.pathname.includes('/recent-activity/')) {
+    sessionStorage.removeItem(ACTIVITY_SCAN_FLAG);
+    activityScanActive = true;
+    runActivityScan();
+  }
 
 })();

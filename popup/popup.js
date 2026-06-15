@@ -4,6 +4,7 @@ let allJobs = [];
 let currentFilter = 'all';
 let currentJobId = null;
 let autoScanRunning = false;
+let activityScanRunning = false;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,11 @@ function openDetail(postId) {
 
   const meta = [];
   if (job.posterName) meta.push(`Posted by ${job.posterName}`);
+  if (job.sourceType === 'profile_activity') {
+    const sourceName = job.sourceProfileName || job.sourceProfileSlug || 'profile activity';
+    const action = job.engagementType === 'commented' ? 'commented on' : 'reacted to';
+    meta.push(`${sourceName} ${action} this`);
+  }
   if (job.timestamp) meta.push(formatDate(job.timestamp));
   $('detail-meta').textContent = meta.join(' · ');
 
@@ -238,6 +244,13 @@ async function getLinkedInTab() {
   return tabs[0];
 }
 
+async function getLinkedInProfileTab() {
+  const activityTabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/in/*/recent-activity/*' });
+  if (activityTabs.length) return activityTabs[0];
+  const profileTabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/in/*' });
+  return profileTabs[0] || null;
+}
+
 function setAutoScanUI(running, label) {
   autoScanRunning = running;
   const btn  = $('btn-autoscan');
@@ -259,11 +272,38 @@ function setAutoScanUI(running, label) {
                                'Auto-scan idle';
 }
 
+function setActivityScanUI(running, label) {
+  activityScanRunning = running;
+  const btn = $('btn-activityscan');
+  const dot = $('activityscan-indicator');
+  const lbl = $('activityscan-label');
+
+  if (running) {
+    btn.textContent = 'Stop';
+    btn.className = 'autoscan-btn stop';
+    dot.className = 'autoscan-dot running';
+  } else {
+    btn.textContent = 'Scan Activity';
+    btn.className = 'autoscan-btn start';
+    dot.className = `autoscan-dot ${label === 'done' ? 'done' : 'idle'}`;
+  }
+
+  lbl.textContent = running ? 'Scanning activity...' :
+    label === 'done'           ? 'Activity scan complete' :
+    label === 'not_on_profile' ? 'Open a LinkedIn profile first' :
+    label === 'navigating'     ? 'Opening activity page...' :
+                                 'Activity scan idle';
+}
+
 // Listen for status updates from the content script (relayed via service worker)
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'AUTOSCAN_STATUS') {
     setAutoScanUI(msg.payload.active, msg.payload.reason);
     if (!msg.payload.active) loadJobs(); // refresh list when scan ends
+  }
+  if (msg.type === 'ACTIVITYSCAN_STATUS') {
+    setActivityScanUI(msg.payload.active, msg.payload.reason);
+    if (!msg.payload.active) loadJobs();
   }
 });
 
@@ -279,6 +319,14 @@ async function init() {
     if (tab) {
       const state = await chrome.tabs.sendMessage(tab.id, { type: 'GET_AUTOSCAN_STATE' }).catch(() => null);
       if (state?.active) setAutoScanUI(true);
+    }
+  } catch { /* tab not reachable */ }
+
+  try {
+    const tab = await getLinkedInProfileTab();
+    if (tab) {
+      const state = await chrome.tabs.sendMessage(tab.id, { type: 'GET_ACTIVITYSCAN_STATE' }).catch(() => null);
+      if (state?.active) setActivityScanUI(true);
     }
   } catch { /* tab not reachable */ }
 
@@ -312,6 +360,37 @@ async function init() {
         await chrome.tabs.sendMessage(tab.id, { type: 'STOP_AUTOSCAN' });
       } catch { /* tab may have navigated away */ }
       setAutoScanUI(false, 'idle');
+    }
+  });
+
+  $('btn-activityscan').addEventListener('click', async () => {
+    const tab = await getLinkedInProfileTab();
+
+    if (!tab) {
+      setActivityScanUI(false, 'not_on_profile');
+      return;
+    }
+
+    if (!activityScanRunning) {
+      setActivityScanUI(true);
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: 'START_ACTIVITY_SCAN' });
+      } catch {
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/feed-scanner.js'] });
+          await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content/feed-scanner.css'] });
+          await new Promise(r => setTimeout(r, 300));
+          await chrome.tabs.sendMessage(tab.id, { type: 'START_ACTIVITY_SCAN' });
+        } catch {
+          setActivityScanUI(false, 'idle');
+          $('activityscan-label').textContent = 'Reload the LinkedIn profile and try again';
+        }
+      }
+    } else {
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: 'STOP_ACTIVITY_SCAN' });
+      } catch { /* tab may have navigated away */ }
+      setActivityScanUI(false, 'idle');
     }
   });
 

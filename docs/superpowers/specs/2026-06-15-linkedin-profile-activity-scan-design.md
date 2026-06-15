@@ -13,7 +13,7 @@ The feature runs from the extension popup while the active LinkedIn tab is on a 
 1. User opens a LinkedIn profile, such as Anna Miller.
 2. User opens the extension popup.
 3. User clicks `Scan Activity`.
-4. The content script navigates the current tab to `/in/<slug>/recent-activity/all/` if needed.
+4. The content script navigates the current tab to `/in/<slug>/recent-activity/comments/` if needed.
 5. The script scrolls through loaded activity items, extracts posts the profile appears to have commented on or reacted to, and submits each candidate to the background worker.
 6. The background worker uses the existing AI job classifier.
 7. Relevant jobs are saved to the same saved-jobs list.
@@ -31,7 +31,7 @@ The scanner infers engagement type from visible activity card text and labels:
 - `reacted`: card text includes phrases such as "liked this", "celebrates this", "supports this", "loves this", "reacted to this", or similar LinkedIn reaction wording.
 - `unknown`: a post permalink is present but the engagement text is not definitive.
 
-Only `commented` and `reacted` items are submitted by default. Unknown items may be counted as skipped so the user can see progress without saving unrelated profile posts.
+Only `commented` and `reacted` items are submitted by default. Unknown items may be counted as skipped so the user can see progress without saving unrelated profile posts. LinkedIn may not expose a reactions activity route for every profile; when it does not, the scan still captures comment activity and will process reacted cards if they are visible on the current activity surface.
 
 ## Data Shape
 
@@ -58,4 +58,3 @@ Add small pure helper functions for activity extraction so they can be tested wi
 - engagement-type inference
 - candidate extraction and de-duplication from synthetic activity DOM-like objects
 - storage of optional source metadata through `ANALYZE_POST`
-

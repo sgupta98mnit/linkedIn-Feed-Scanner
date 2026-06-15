@@ -274,6 +274,13 @@ async function handleMessage(message) {
           timestamp:    Date.now(),
           postText:     postText.slice(0, 500),
         };
+        if (payload.sourceType) {
+          job.sourceType = payload.sourceType;
+          job.sourceProfileSlug = payload.sourceProfileSlug || '';
+          job.sourceProfileName = payload.sourceProfileName || '';
+          job.engagementType = payload.engagementType || '';
+          job.activityUrl = payload.activityUrl || '';
+        }
         // Save first — if saveJob throws (storage quota, etc.) we must NOT mark
         // the post as scanned, or it becomes permanently blocklisted but never
         // actually saved.

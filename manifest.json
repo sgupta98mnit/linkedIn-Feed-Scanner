@@ -58,7 +58,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["libs/*", "options/pdf-worker.js"],
+      "resources": ["libs/*", "options/pdf-worker.js", "utils/activity.js"],
       "matches": ["<all_urls>"]
     }
   ]
